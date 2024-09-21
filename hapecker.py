@@ -1,11 +1,9 @@
 #coding: utf-8
 
 
-import subprocess, sys, os
-import threading, time
+import subprocess, os, re
 import logging, argparse
-import shutil
-import zipfile
+import zipfile, json
 
 
 logging.basicConfig(level = logging.INFO, format='%(asctime)s - %(levelname)s [%(filename)s:%(lineno)d]: %(message)s')
@@ -46,8 +44,6 @@ def execShell(cmd, t=120):
 
   return ret
 
-def staticScan(source):
-  pass
 
 def splitTofiles(sourceFile, outDir):
   logging.info('Split into files...')
@@ -57,11 +53,14 @@ def splitTofiles(sourceFile, outDir):
   except:
     pass
   fileOut = {}  # slower
+  errFile = {}
+  existFiles = []
   with open(sourceFile, 'r', encoding='utf8') as f:
     started = False
     dirs = []
     currentFile = ''
     out = ''
+    fullClassname = ''
     while True:
       line = f.readline()
       if not line: # at least '\n'
@@ -105,6 +104,7 @@ def splitTofiles(sourceFile, outDir):
           dirName = '/'.join(tmp[:-2])
           clsName = tmp[-2]
           funName = tmp[-1]+'('+line.split('(')[1]
+          fullClassname = '.'.join(tmp[:-1])
 
         try:
           if dirName not in dirs:
@@ -117,13 +117,21 @@ def splitTofiles(sourceFile, outDir):
         
       elif started and line.startswith('}\n'):
         started = False
-        out += '}\n\n'
+        fullClassname = ''
+        out += '}\n'
         try:
-          with open(currentFile, 'a', encoding='utf8') as ff:
+          mode = 'w'
+          if currentFile in existFiles:
+            mode = 'a'
+          else:
+            existFiles.append(currentFile)
+          with open(currentFile, mode, encoding='utf8') as ff:
             ff.write(out)
             out = ''
         except Exception as e:
-          logging.error(e)
+          # logging.error(e)
+          con = errFile.get(currentFile, '')
+          errFile[currentFile] = con+out
           out = ''
 
         # fileOut[currentFile] = fileOut.get(currentFile, '') +'\n'+out
@@ -140,22 +148,30 @@ def splitTofiles(sourceFile, outDir):
         #   fileOut = {}
         
       elif started:
-        out += line
+        if fullClassname:
+          out += line.replace(fullClassname, 'this')
+        else:
+          out += line
 
-  # for k, v in fileOut.items():
-  #   try:
-  #     with open(k, 'a', encoding='utf8') as ff:
-  #       ff.write(v)
-  #   except Exception as e:
-  #     logging.error(e)
-
-
+  errContent = ''
+  for k, v in errFile.items():
+    try:
+      with open(k, 'w', encoding='utf8') as ff:
+        ff.write(v)
+    except Exception as e:
+      # logging.error(e)
+      errContent += '=file='+k+'\n'+v+'=file-end=\n\n'
+  if errContent:
+    logging.info('See errfile(File Not Found error).')
+    with open(sdir+'/errfile', 'w', encoding='utf8') as ff:
+      ff.write(errContent)
 
 def simplifyy(rawCon, loadVAR):
   out = []
   rawConList = rawCon.split('\n')
   skipNext = False
   for ind, vv in enumerate(rawConList):
+    vv = vv.replace('a2.', 'this.')
     v = vv.strip()
     if skipNext:
       skipNext = False
@@ -167,18 +183,94 @@ def simplifyy(rawCon, loadVAR):
     if v.endswith('= '+loadVAR):
       # v0 = loadVV
       # v0 = HiSysEventUtil
-      if not nextLine.startswith(v.split()[0]+' ='):
+
+      # v0 = loadVV
+      # v0 = v0.obj
+
+      # v0 = loadVV
+      # v0 = v0+obj
+      if not nextLine.startswith(v.split()[0]+' =') or '= '+v.split()[0] in nextLine:
         out.append(vv)
     elif v.startswith('//'):
+      # //v(v,v)
+      # aa = v(v,v)
       if not v.removeprefix('//') in nextLine:
         if v.startswith('//TD '):
           out.append(vv)
         else:
-          out.append(vv.replace('//', ''))
+          if ' //' in vv:
+            out.append(vv.replace('//', ''))
+          else:
+            out.append(vv)
     else:
       out.append(vv)
-  
-  return '\n'.join(out)
+
+  # return '\n'.join(out)
+
+  tmp = '\n'.join(out).split('.function any')
+  outout = []
+  for tout in tmp:
+    tt = tout.split('\n')
+    funout = []
+    flen = len(tt)
+    for ind, vv in enumerate(tt):
+      # v0 = DateUtil
+      # v1 = v0.dateFormat
+      tvv = vv.strip()
+      if not tvv:
+        funout.append(vv)
+        continue
+      tv = tvv.split(' = ')
+      if len(tv) == 2:
+        # if 'v6 = loadVV' in tvv:
+        #   print(1)
+        leftcon = '\n'.join(tt[ind+1:])
+        if not '//' in tvv and ind < flen-1 and tv[0] in leftcon:
+          for i in range(ind+1, flen):
+            laterBreak = False
+            # v6 = loadVV
+            # v6 = v6+".zip"
+
+            # set value again
+            if tt[i].strip().startswith(tv[0]+' = '):
+              if '= '+tv[0] in tt[i]:
+                laterBreak = True
+              else:
+                break
+            if tv[0] not in tt[i]:
+              continue
+
+            # replace value
+            if not '.' in tt[i].split(' = ')[0]:
+              tt[i] = tt[i].replace(tv[0]+'.', tv[1]+'.')
+            tt[i] = tt[i].replace(tv[0]+'+', tv[1]+'+')
+            tt[i] = tt[i].replace(tv[0]+',', tv[1]+',')
+            tt[i] = tt[i].replace(tv[0]+')', tv[1]+')')
+            tt[i] = tt[i].replace(tv[0]+'(', tv[1]+'(')
+            tt[i] = tt[i].replace(tv[0]+'/', tv[1]+'/')
+            tt[i] = re.sub(tv[0]+'$', tv[1], tt[i])
+
+            if laterBreak:
+              break
+      
+      if len(tv) != 2 or ind == 0 or ind == flen -1 or \
+        tv[0] in '\n'.join(tt[ind+1:]).split(tv[0]+' = ')[0] or '.' in tv[0] or '[' in tv[0]:
+        # v6.memLevel
+        # not used var
+        funout.append(vv)
+ 
+    outout.append('\n'.join(funout))
+      
+  return '.function any'.join(outout)
+
+def getParamList(startVar, count, start=0, end=0):
+  # v5, 2 => v5, v6
+  si = int(startVar[1:])
+  cc = int(count.strip(','), 16) + end
+  out = []
+  for i in range(start, cc):
+    out.append('v'+str(si+i))
+  return ', '.join(out)
 
 
 def simplify(hap, outDir):
@@ -193,11 +285,22 @@ def simplify(hap, outDir):
   multi_line_str = ''
   logging.info('Decompile abc...')
   
-  #create file
+  encode = 'latin1'
+  # create file
   with open(hap+'.ss', 'w', encoding='utf8') as f:
     f.write(simplifyy(out, loadVAR))
+  with open(hap+'.raw', 'w', encoding='utf8') as f:
+    f.write(out)
+
+  moduleTag = []
+  importLibs = []
+  moduleStart = True
+  soModuleMap = {}
+  libModuleMap = {}
   
   with open(hap, 'r', encoding='latin1') as f:
+    # 'utf-8' codec can't decode byte 0xc0 in position 4718: invalid start byte 2872 0x1b43bb
+  # with open(hap, 'r', encoding='utf8') as f:
     started = False
     accValue = 'acc'    
     staNeedReset = ''
@@ -212,21 +315,77 @@ def simplify(hap, outDir):
       if not line: # at least '\n'
         break
 
-      
+      # lib import
+      if moduleStart and '[ ModuleTag: ' in line:
+        # ['LOCAL_EXPORT', 'REGULAR_IMPORT', 'INDIRECT_EXPORT', 'STAR_EXPORT', 'NAMESPACE_IMPORT']
+        line = line.split(' [ ')[-1]
+        line = line.split('; ]}')[0]
+        libs = line.split('; ')
+        for lb in libs:
+          tmp = ''
+          localname = ''
+          importname = ''
+          libname = ''
+          exportname = ''
+          tb = lb.split(', ')
+          for t in tb:
+            tt = t.split(': ')
+            if tt[0] == 'ModuleTag':
+              tmp = tt[1]
+              if tt[1] not in moduleTag:
+                moduleTag.append(tt[1])
+            elif tt[0] == 'local_name':
+              localname = tt[1]
+            elif tt[0] == 'import_name':
+              importname = tt[1]
+            elif tt[0] == 'module_request':
+              libname = tt[1]
+            elif tt[0] == 'export_name':
+              exportname = tt[1]
+            else:
+              logging.error(tt[0])
+              return
+          if tmp == 'REGULAR_IMPORT':
+            # importLibs.append('import '+importname+' from '+libname+' as '+localname)
+            if libname.startswith('@app:'):
+              if localname in soModuleMap.keys() and libname.split('/')[-1] != soModuleMap.get(localname, ''):
+                logging.error('lib name collision '+ libname+' -local- '+localname)
+              soModuleMap[localname] = libname.split('/')[-1]
+            # else:
+            #   libModuleMap[localname] = libname
+              
+          elif tmp == 'NAMESPACE_IMPORT' or tmp == 'STAR_EXPORT' or tmp == 'INDIRECT_EXPORT':
+            # importLibs.append('import '+importname+' as '+localname)
+            pass
+          elif tmp == 'LOCAL_EXPORT':
+            libModuleMap[localname] = libname
+          else:
+            logging.error(lb)
+            return
+        
+      if line == '# RECORDS\n':
+        # print(moduleTag)
+        # print(importLibs)
+        moduleStart = False
+        # print(soModuleMap)
+        # return
 
       if line.startswith('.function '):
         started = True
         out += '\n'+line
         continue
-      elif started and ( line.startswith('L_ESSlotNumberAnnotation:') or line.startswith('# ====================\n') ):
+      elif started and ( line.startswith('L_ESSlotNumberAnnotation:') or line.startswith('# ===========') ):
         # avoid lda.str parse error
         started = False
         # out += '}\n\n'
+        accValue = ''
 
         # Append to file 5M
         if len(out) > 5 * 1024 * 1024:
+          with open(hap+'.raw', 'a', encoding='utf8') as f:
+            f.write(out.encode('latin1').decode('utf8'))
           with open(hap+'.ss', 'a', encoding='utf8') as ff:
-            ff.write(simplifyy(out, loadVAR))
+            ff.write(simplifyy(out, loadVAR).encode('latin1').decode('utf8'))
             out = ''
 
         continue
@@ -272,7 +431,7 @@ def simplify(hap, outDir):
             multi_line_str = ''
             continue
 
-          if code.startswith('lda '):            
+          if code.startswith('lda '):
             accValue = code.split()[1]
           elif code.startswith('lda.str '):
             tmps = ' '.join(tc[1:])
@@ -293,6 +452,8 @@ def simplify(hap, outDir):
           elif code.startswith('wide.stobjbyindex '):
             out += sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n'
 
+          # ld + sta + throw
+          # ld + throw
           elif code.startswith('sta '):
             out += sep+code.split()[1]+' = '+accValue+'\n'
             if accValue == loadVAR:
@@ -306,6 +467,16 @@ def simplify(hap, outDir):
               out += "****lda.str error ????**** \n"
 
             accValue = tc[1].strip('"')
+            tn = soModuleMap.get(accValue, '')
+            if tn:
+              tn = '(lib'+tn+'.so)'
+            else:
+              tn = libModuleMap.get(accValue, '')
+              if tn:
+                if tn.startswith('@bundle:'):
+                  tn = tn.split('@')[-1]
+                tn = '@_modules_/'+tn
+            accValue += tn
             if staNeedReset:
               out += sep+staNeedReset+' = '+accValue+'\n'
               staNeedReset = ''
@@ -335,9 +506,9 @@ def simplify(hap, outDir):
           elif code.startswith('ldobjbyvalue '):
             accValue = tc[2]+'['+accValue+']'
           elif code.startswith('ldsuperbyname '):
-            accValue = 'super.'+tc[2]+'//'+accValue
+            accValue = 'super'+'/'+accValue+'/.'+tc[2].strip('"')
           elif code.startswith('ldsuperbyvalue '):
-            accValue = tc[2]+'.super'+'//'+accValue
+            accValue = tc[2]+'.super'+'/'+accValue+'/'
           elif code.startswith('ldthisbyname '):
             accValue = 'this.'+tc[2]
           elif code.startswith('ldobjbyindex '):
@@ -442,7 +613,7 @@ def simplify(hap, outDir):
           elif code.startswith('tryldglobalbyname '):
             accValue = tc[2].strip('"')
           elif code.startswith('defineclasswithbuffer ') or code.startswith('callruntime.definesendableclass'):
-            accValue = tc[2]
+            accValue = tc[2].removesuffix(',')+'(super:'+tc[-1]+')'
           elif code.startswith('definefunc '):
             accValue = tc[2]
           elif code.startswith('definemethod '):
@@ -590,28 +761,28 @@ def simplify(hap, outDir):
             tt = tc[2].strip(',').strip('"')
             out += sep+tc[3]+'.'+tt+' = '+accValue+'\n'
           elif code.startswith('newobjrange '):
-            accValue = tc[3]+'('+tc[3]+'+1...'+tc[3]+'+'+tc[2].strip(',')+'-1)'
+            accValue = tc[3]+'('+getParamList(tc[3], tc[2], 1, 0)+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('wide.newobjrange '):
-            accValue = tc[2]+'('+tc[2]+'+1...'+tc[2]+'+'+tc[1].strip(',')+'-1)'
+            accValue = tc[2]+'('+getParamList(tc[2], tc[1], 1, 0)+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('callthisrange '):
-            accValue = accValue+'(this-'+tc[3]+'+1...'+tc[3]+'+'+tc[2].strip(',')+')'
+            accValue = accValue+'('+getParamList(tc[3], tc[2], 1, 1)+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('wide.callthisrange '):
-            accValue = accValue+'(this-'+tc[2]+'+1...'+tc[2]+'+'+tc[1].strip(',')+')'
+            accValue = accValue+'('+getParamList(tc[2], tc[1], 1, 1)+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('callrange '):
-            accValue = accValue+'('+tc[3]+'+1...'+tc[3]+'+'+tc[2].strip(',')+'-1)'
+            accValue = accValue+'('+getParamList(tc[3], tc[2])+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('wide.callrange '):
-            accValue = accValue+'('+tc[2]+'+1...'+tc[2]+'+'+tc[1].strip(',')+'-1)'
+            accValue = accValue+'('+getParamList(tc[2], tc[1])+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('supercallarrowrange '):
-            accValue = accValue+'.super('+tc[3]+'+1...'+tc[3]+'+'+tc[2].strip(',')+'-1)'
+            accValue = accValue+'.super('+getParamList(tc[3], tc[2])+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('wide.supercallarrowrange '):
-            accValue = accValue+'.super('+tc[2]+'+1...'+tc[2]+'+'+tc[1].strip(',')+'-1)'
+            accValue = accValue+'.super('+getParamList(tc[2], tc[1])+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('callthis0 '):
             accValue = accValue+'()'
@@ -638,22 +809,22 @@ def simplify(hap, outDir):
             accValue = accValue+'('+tc[2]+tc[3]+tc[4]+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('supercallthisrange '):
-            accValue = 'super'+'('+tc[3]+'+1...'+tc[3]+'+'+tc[2].strip(',')+'-1)'
+            accValue = 'super'+'('+getParamList(tc[3], tc[2])+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('wide.supercallthisrange '):
-            accValue = 'super'+'('+tc[2]+'+1...'+tc[2]+'+'+tc[1].strip(',')+'-1)'
+            accValue = 'super'+'('+getParamList(tc[2], tc[1])+')'
             out += sep+'//'+accValue+'\n'
           elif code.startswith('apply '):
             accValue = tc[2].strip(',')+'.'+accValue+'('+tc[3]+')'
             out += sep+'//'+accValue+'\n'
 
           elif code.startswith('mov '):
-            if tc[2] == 'a0':
-              tc[2] += '//FunctionObject'
-            elif tc[2] == 'a1':
-              tc[2] += '//NewTarget'
-            elif tc[2] == 'a2':
-              tc[2] += '//this'
+            # if tc[2] == 'a0':
+            #   tc[2] += '//FunctionObject'
+            # elif tc[2] == 'a1':
+            #   tc[2] += '//NewTarget'
+            # elif tc[2] == 'a2':
+            #   tc[2] += '//this'
             out += sep+tc[1].strip(',')+' = '+tc[2]+'\n'
 
           
@@ -759,55 +930,184 @@ def simplify(hap, outDir):
   
   if notTranslate:
     logging.info('Not translate '+str(notTranslate))
+  with open(hap+'.raw', 'a', encoding='utf8') as f:
+    f.write(out.encode('latin1').decode('utf8'))
   with open(hap+'.ss', 'a', encoding='utf8') as f:
-    f.write(simplifyy(out, loadVAR))
+    f.write(simplifyy(out, loadVAR).encode('latin1').decode('utf8'))
 
-  splitTofiles(hap+'.ss', outDir)
 
-def disasm(hap):
-  logging.info('Unzip...')
-  curdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '')
-  odir = os.path.join(curdir, 'apps', os.path.basename(hap)+'.e', '')
+def disasm(hap, odir, disasmBin):
+  doneDisasm = False
+  if os.path.isfile(odir+'sources/_disasm'):
+    doneDisasm = True
+  doneDecompile = False
+  if os.path.isfile(odir+'sources/_decompile'):
+    doneDecompile = True
+  doneSplitfile = False
+  if os.path.isfile(odir+'sources/_splitfile'):
+    doneSplitfile = True
+  
+  logging.info('Start '+hap)
+  logging.info('Unzip...')  
   zipfile.ZipFile(hap).extractall(odir)
-  disasmBin = curdir+'disasm/ark_disasm.exe'
   # logging.info('Need set to path '+disasmBin)
   pp = odir+'ets/'
   for f in os.listdir(pp):
     if f.endswith('.abc'):
       logging.info('Disasm '+f)
       outfile = pp+f+'.ets'
-      cmd = disasmBin+' '+pp+f+' '+outfile
-      out = execShell(cmd)
-      simplify(outfile, odir)
-      # print(out)
+      if not doneDisasm:
+        cmd = disasmBin+' '+pp+f+' '+outfile
+        out = execShell(cmd)
+        if 'e' in out.keys():
+          logging.error('Disam error '+str(out))
+          continue
+      else:
+        logging.info('Skip disasm')
+      if not doneDecompile:
+        simplify(outfile, odir)
+      else:
+        logging.info('Skip decompile')
+      if not doneSplitfile:
+        splitTofiles(outfile+'.ss', odir)
+      else:
+        logging.info('Skip split file')
     elif os.path.isdir(pp+f):
       for f2 in os.listdir(pp+f):
         if f2.endswith('.abc'):
           outfile = pp+f+'/'+f2+'.ets'
           logging.info('Disasm '+f+'/'+f2)
-          cmd = disasmBin+' '+pp+f+'/'+f2+' '+outfile
-          out = execShell(cmd)
-          simplify(outfile, odir)
-          # print(out)
-      
-  return odir
+          if not doneDisasm:
+            cmd = disasmBin+' '+pp+f+'/'+f2+' '+outfile
+            out = execShell(cmd)
+            if 'e' in out.keys():
+              logging.error('Disam error '+str(out))
+              continue
+          else:
+            logging.info('Skip disasm')
+          if not doneDecompile:
+            simplify(outfile, odir)
+          else:
+            logging.info('Skip decompile')
+          if not doneSplitfile:
+            splitTofiles(outfile+'.ss', odir)
+          else:
+            logging.info('Skip split file')
+  with open(odir+'sources/_disasm', 'w', encoding='utf8') as f:
+    f.write('done')
+  with open(odir+'sources/_decompile', 'w', encoding='utf8') as f:
+    f.write('done')
+  with open(odir+'sources/_splitfile', 'w', encoding='utf8') as f:
+    f.write('done')
 
-def getModuleInfo(hap):
-  # simplify(hap, '')
-  # return
-  import json
-  logging.info('Start '+hap)
+def checkVulns(fileName, content, vulns, out):
+  lens = len(content)
+  tmpOut = {}
+  for k, vv in vulns.items():
+    for v in vv:
+      start = v[0]
+      end = v[1]
+      ind = -1
+      ind2 = -1
+      sliceCode = []
+      for i in range(0, lens):
+        if ind>-1 and i > ind:
+          sliceCode.append(content[i])
+          if end == '===noend===':
+            break
+        if start in content[i]:
+          ind = i
+          sliceCode.append(content[i])
+        elif ind>-1 and end in content[i]:
+          ind2 = i       
+          tmp = tmpOut.get(k, [])
+          tmp.append(''.join(sliceCode))
+          tmpOut[k] = tmp
+          sliceCode = []
+          ind = -1
+          
+      if ind2 == -1 and ind > -1: # no end
+        tmp = tmpOut.get(k, [])
+        ed = ind + 5
+        if ed> lens -1:
+          ed = lens -1
+        tmp.append(''.join(content[ind:ed])+'    ===noend===\n')
+        tmpOut[k] = tmp
 
-  # disasm and decompile
-  modulePath = disasm(hap)
+  if tmpOut:
+    # single file scan once
+    out[fileName] = tmpOut
 
-  moduleCon = open(modulePath+'module.json', "r", encoding='utf8').read()
+def doScan(sdir, vulns, out, count):
+  # scandir
+  with os.scandir(sdir) as entries:
+    for entry in entries:
+      if entry.is_file():
+        count[0] += 1
+        try:
+          fileName = os.path.join(sdir, entry.name)
+          with open(fileName, 'r', encoding='utf8') as t:
+            con = t.readlines()
+            checkVulns(fileName, con, vulns, out)
+        except Exception as e:
+          import traceback
+          traceback.print_exc()
+          logging.error(e)
+      elif entry.is_dir():
+        doScan(os.path.join(sdir, entry.name), vulns, out, count)
+  
+def staticScan(source, scan):
+  if not scan:
+    return
+  logging.info('Start static vuln scan...')
+  noEnd = '===noend==='
+  vulns = {
+    "broadcast": [['[ string:"events",', '.events = ']],
+    "webview": [['javaScriptProxy\n', '.object = '], 
+                ['.runJavaScript\n', noEnd], 
+                ['.createWebMessagePorts\n', noEnd], 
+                ['.postMessageEvent\n', noEnd]],
+    # "account": [['.setCredential\n', noEnd],
+    #             ['.setCustomData\n', noEnd],
+    #             ['.setAuthToken\n', noEnd],
+    #             ['.createAccount\n', noEnd],],
+  }
+  out = {}
+  count = [0]
+  doScan(os.path.join(source, 'sources'), vulns, out, count)
+  wout = []
+  wout.append('Total file:'+str(count))
+  for k, v in out.items():
+    wout.append('===='+k.removeprefix(source))
+    for k2, v2 in v.items():
+      wout.append('=='+k2)
+      wout.append('='+'\n'.join(v2))
+  
+  with open(source+'/vuln.info', 'w', encoding='utf8') as f:
+    f.write('\n'.join(wout))
+
+def getModuleInfo(hap, odir):
+  from io import BytesIO
   logging.info('Parse module.json')
+  fd = open(hap, "rb")
+  hapCon = fd.read()
+  zip = zipfile.ZipFile(BytesIO(hapCon))
+  moduleCon = ''
+  for i in zip.namelist():
+    if i == "module.json":
+      moduleCon = zip.read(i)
+      break
+  
+  bundleName = ''
+  versionName = ''
   if moduleCon:
     mjson = json.loads(moduleCon)
     out = '=App:'
     app = mjson.get('app', {})
     out += app.get('bundleName', '')+' '+ app.get('versionName', '') +'\n'
+    versionName = app.get('versionName', '')
+    bundleName = app.get('bundleName', '')
+    logging.info('BundleName '+bundleName)
 
     exportedAbility = []
     noneExported = []
@@ -835,20 +1135,102 @@ def getModuleInfo(hap):
     out += '=Exported:\n '+'\n '.join(exportedAbility) + '\n\n'
     out += '=None-Exported:\n '+'\n '.join(noneExported)
 
-    print(out)
-    with open(modulePath+'module.info', 'w', encoding='utf8') as f:
+    bundleName = os.path.basename(hap)
+    bundleName = bundleName.removesuffix('.hap')
+    bundleName = bundleName.removesuffix('.hsp')
+
+    # print(out)
+    if os.path.isfile(odir+bundleName+'/module.info'):
+      tc = ''
+      with open(odir+bundleName+'/module.info', 'r', encoding='utf8') as f:
+        tc = f.read()
+      tv = tc.split('\n')[0].split()[-1]
+      
+      if out != tc and tv[0].isdigit() and versionName == tv:
+        logging.info('Multi hap')
+        import hashlib
+        md5 = hashlib.md5(tc.encode('utf8'))
+        bundleName += '-'+md5.hexdigest()
+    try:
+      os.mkdir(odir+bundleName)
+    except:
+      pass
+    with open(odir+bundleName+'/module.info', 'w', encoding='utf8') as f:
       f.write(out)
-    logging.info('Done')
   else:
     logging.error('module.json read error')
+  
+  return bundleName
 
-def getExposed(pkg):
-  if pkg.endswith('.hap'):
-    getModuleInfo(pkg)
+
+def doWork(pkg, scan):
+  pkg = os.path.abspath(pkg)
+  app = getModuleInfo(pkg, os.path.join(curdir, 'apps', ''))
+  workdir = os.path.join(curdir, 'apps', app, '')
+  disasm(pkg, workdir, curdir+'disasm/ark_disasm.exe')
+  staticScan(workdir, scan)
+  logging.info('Done.')
+
+def pullHap(hap, outdir):
+  ret = False
+  cmd = 'hdc shell "cp '+hap+' /data/local/tmp/tmphap"'
+  out = execShell(cmd)
+  if 'Permission denied' in str(out):
+    logging.error('No perm '+hap)
   else:
-    logging.error("python3 hapecker.py -p xxx.hap")
+    cmd = 'hdc file recv /data/local/tmp/tmphap '+outdir
+    out = execShell(cmd)
+    if 'FileTransfer finish' not in str(out):
+      print(out)
+    else:
+      ret = True
+  return ret
 
+def main(pkgs, scan):
+  if pkgs.endswith('.hap'):
+    doWork(pkgs, scan)
+  else:
+    # bm dump -a | cat > /data/local/tmp/pkglist
+    # hdc list targets
+    # hdc -t 2LQ0224226000002 shell
+    for pkg in pkgs.split(','):
+      pkg = pkg.strip()
+      if not pkg:
+        continue
+      cmd = 'hdc shell "bm dump -n '+pkg+'"'
+      out = execShell(cmd)
+      outt = out.get('d', '')
+      if not outt:
+        outt = out.get('e', '')
+      if pkg in outt:
+        haps = []
+        tmp = outt.split('\n')
+        for t in tmp:
+          # "hapPath": "/system/app/Screenshot/Screenshot.hap",
+          if '"hapPath"' in t:
+            tt = t.split('"')[-2]
+            if tt not in haps:
+              haps.append(tt)
+        multi = False
+        if len(haps) > 1:
+          multi = True
+        for ha in haps:
+          logging.info(ha)
+          tf = ha.split('/')
+          subName = '.hap'
+          if multi:
+            subName = '_'+tf[-1]
+          hadir = os.path.join(curdir, 'apps', tf[-2]+subName)
+          ret = pullHap(ha, hadir)
+          if ret:
+            try:
+              doWork(hadir, scan)
+            except Exception as e:
+              logging.error(e)
+      else:
+        logging.error("Not exist "+pkg)
 
+curdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '')
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Hap reverse', formatter_class=argparse.RawDescriptionHelpFormatter,
   epilog='''
@@ -860,10 +1242,11 @@ if __name__ == '__main__':
   
   args = parser.parse_args()
   pkg = args.pkg
+  scan = args.scan
 
   try:
     if pkg:
-      getExposed(pkg)
+      main(pkg, scan)
 
     else:
       parser.print_help()
