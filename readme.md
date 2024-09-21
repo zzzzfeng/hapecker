@@ -8,6 +8,26 @@
 ![out.png](out.png)
 
 ## 反编译效果
+
+- 反编译代码
+```code
+function #17241112467781525069#(any a0, any a1, any a2, any a3, any a4) <static> {
+    v1 = a1
+    v3 = a3
+    (v3 == false) != 0 : jmp jump_label_0
+    hilog.error(DOMAIN_NUMBER,TAG,"Failed to create subscriber. Code is "+a3.code+", message is "+a3.message+"")
+  jump_label_0:
+    hilog.info(DOMAIN_NUMBER,TAG,"Succeeded in creating subscriber.")
+    //TD slot- a4(save)
+    (null !== subscriber) == 0 : jmp jump_label_1
+    commonEventManager.subscribe(subscriber,this.#1191169917258594260#:(any,any,any,any,any),)
+    jmp jump_label_2
+  jump_label_1:
+    hilog.error(DOMAIN_NUMBER,TAG,"Need create subscriber")
+  jump_label_2:
+}
+```
+
 - abc字节码
 ```code
 L_ESSlotNumberAnnotation:
@@ -126,52 +146,4 @@ jump_label_2:
 }
 ```
 
-- 反编译代码
-```code
-.function any com.sec.ohos.entry.ets.pages.CompPage.#17241112467781525069#(any a0, any a1, any a2, any a3, any a4) <static> {
-    v0 = a0//FunctionObject
-    v1 = a1//NewTarget
-    v2 = a2//this
-    v3 = a3
-    v4 = a4
-    (v3 == false) != 0 : jmp jump_label_0
-    v7 = hilog
-    v6 = v7.error
-    v8 = DOMAIN_NUMBER
-    v9 = TAG
-    v10 = "Failed to create subscriber. Code is "
-    v11 = v3
-    v10 = v10+v11.code
-    v10 = v10+", message is "
-    v11 = v3
-    v10 = v10+v11.message
-    v10 = v10+""
-    v6(v8,v9,v10)
-  jump_label_0:
-    v7 = hilog
-    v6 = v7.info
-    v8 = DOMAIN_NUMBER
-    v9 = TAG
-    v10 = "Succeeded in creating subscriber."
-    v6(v8,v9,v10)
-    v6 = v4
-    v6 = v6
-    //TD slot- v6(save)
-    v6 = subscriber
-    (null !== v6) == 0 : jmp jump_label_1
-    v7 = commonEventManager
-    v6 = v7.subscribe
-    v8 = subscriber
-    v9 = com.sec.ohos.entry.ets.pages.CompPage.#1191169917258594260#:(any,any,any,any,any),
-    v6(v8,v9)
-    jmp jump_label_2
-  jump_label_1:
-    v7 = hilog
-    v6 = v7.error
-    v8 = DOMAIN_NUMBER
-    v9 = TAG
-    v10 = "Need create subscriber"
-    v6(v8,v9,v10)
-  jump_label_2:
-}
-```
+
