@@ -14,7 +14,7 @@ def execShellDaemon(cmd, isWin=True):
   async
   '''
   if not isWin:
-    return subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, preexec_fn=os.setsid)
+    return subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE, preexec_fn=os.setsid) # type: ignore
   return subprocess.Popen(cmd, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
 
 def execShell(cmd, t=120):
@@ -72,13 +72,24 @@ def splitTofiles(sourceFile, outDir):
           # function pkg_modules..ohpm.AliyunFaceGuard@95hk0jkt00ayejc0wtys5davotk=.pkg_modules.AliyunFaceGuard.AliyunFaceGuard.func_main_0(
           # function pkg_modules..ohpm.@douyin+common_dto@31.4.5.pkg_modules.@douyin.common_dto.src.main.ets.api.v2.feed_common.com_ss_ugc_aweme_SearchMusicCreateInfo(
           if line.startswith('.function any pkg_modules..ohpm.@'):
-            if line.count('@') != 3:
-              logging.error('lib error '+line)
-              continue
-            tmp = line.split('@')[3].split('(')[0].split('.')
-            dirName = 'libs/'+'/'.join(tmp[:-2])
-            clsName = tmp[-2]
-            funName = tmp[-1]+'('+line.split('(')[1]
+            if '#' not in line:              
+              if line.count('@') != 3:
+                logging.error('lib error '+line)
+                continue
+              tmp = line.split('@')[3].split('(')[0].split('.')
+              dirName = 'libs/'+'/'.join(tmp[:-2])
+              clsName = tmp[-2]
+              funName = tmp[-1]+'('+line.split('(')[1]
+            else:
+              # .function any pkg_modules..ohpm.@hpem+hpem_base@2.4.25.pkg_modules.@hpem.hpem_base.src.main.ets.com.bytedance.hpem.tracker.AbilityLifecycle.#~a0<@1*@3*#(any a0, any a1, any a2, any a3) <static> {
+              lis = line.split('#')
+              if lis[0].count('@') != 3:
+                logging.error('lib error '+line)
+                continue
+              tmp = lis[0].split('@')[3].split('(')[0].split('.')
+              dirName = 'libs/'+'/'.join(tmp[:-2])
+              clsName = tmp[-2]
+              funName = '#'+'#'.join(lis[1:])
           else:
             dirName = 'pkg_modules'
             clsName = 'pkg'
@@ -86,16 +97,30 @@ def splitTofiles(sourceFile, outDir):
         elif '@' in line:
           # lib ?
           # .function any com.ss.hm.ugc.aweme.entry@account_api.ets.experiment.TrustEnvExperiment.func_main_0(
-          if line.count('@') > 1:
-            logging.error(line)
-          line = line.replace('@', '._modules_.')
-          tmp = line.split('(')[0].split(' ')[2].split('.')
-          if len(tmp) < 3:
-            logging.error('ferr '+line)
-            continue
-          dirName = '/'.join(tmp[:-2])
-          clsName = tmp[-2]
-          funName = tmp[-1]+'('+line.split('(')[1]
+          if '#' not in line:
+            if line.count('@') > 1:
+              logging.error(line)
+            line = line.replace('@', '._modules_.')
+            tmp = line.split('(')[0].split(' ')[2].split('.')
+            if len(tmp) < 3:
+              logging.error('ferr '+line)
+              continue
+            dirName = '/'.join(tmp[:-2])
+            clsName = tmp[-2]
+            funName = tmp[-1]+'('+line.split('(')[1]
+          else:
+            # .function any com.ss.hm.ugc.aweme.entry@live_sdk_impl.ets.s32.x319.#~@0>#bindLiveRouterUrls(any a0, any a1, any a2) <static> {
+            lis = line.split('#')
+            if lis[0].count('@') > 1:
+              logging.error(line)
+            li2 = lis[0].replace('@', '._modules_.')
+            tmp = li2.split('(')[0].split(' ')[2].split('.')
+            if len(tmp) < 3:
+              logging.error('ferr '+line)
+              continue
+            dirName = '/'.join(tmp[:-2])
+            clsName = tmp[-2]
+            funName = '#'+'#'.join(lis[1:])
         else:
           tmp = line.split('(')[0].split(' ')[2].split('.')
           if len(tmp) < 3:
@@ -166,9 +191,9 @@ def splitTofiles(sourceFile, outDir):
     with open(sdir+'/errfile', 'w', encoding='utf8') as ff:
       ff.write(errContent)
 
-def simplifyy(rawCon, loadVAR):
+def simplifyy(rawCon, loadVAR, hap):
   out = []
-  rawConList = rawCon.split('\n')
+  rawConList = rawCon
   skipNext = False
   for ind, vv in enumerate(rawConList):
     vv = vv.replace('a2.', 'this.')
@@ -180,7 +205,7 @@ def simplifyy(rawCon, loadVAR):
     if ind < len(rawConList) -1:
       nextLine = rawConList[ind+1]
       nextLine = nextLine.strip()
-    if v.endswith('= '+loadVAR):
+    if '= '+loadVAR in v:
       # v0 = loadVV
       # v0 = HiSysEventUtil
 
@@ -202,38 +227,62 @@ def simplifyy(rawCon, loadVAR):
             out.append(vv.replace('//', ''))
           else:
             out.append(vv)
+    # elif ' = ' in v:
+    #   # v0 = v2(v0)
+    #   # v1 = v2(v0).errorCode
+    #   ttt = v.split(' = ')
+    #   if ttt[1].endswith(')') and ttt[1].count(')')==1 and ' = '+ttt[1]+'.' in nextLine:
+    #     rawConList[ind+1] = rawConList[ind+1].replace(ttt[1]+'.', ttt[0]+'.')
+    #   out.append(vv)
     else:
       out.append(vv)
-
-  # return '\n'.join(out)
-
-  tmp = '\n'.join(out).split('.function any')
+  mode = 'w'
+  if os.path.isfile(hap+'.ss0'):
+    mode = 'a'
+  outstr = ''.join(out)
+  with open(hap+'.ss0', mode, encoding='utf8') as f:
+    f.write(outstr)
+ 
+  # per function
+  tmp = outstr.split('.function any')
   outout = []
   for tout in tmp:
     tt = tout.split('\n')
     funout = []
     flen = len(tt)
+
+    if flen > 10000:
+      logging.info('Too large '+tt[0])
+      outout.append(tout)
+      continue
+
     for ind, vv in enumerate(tt):
-      # v0 = DateUtil
-      # v1 = v0.dateFormat
       tvv = vv.strip()
       if not tvv:
-        funout.append(vv)
+        # funout.append(vv)
         continue
       tv = tvv.split(' = ')
-      if len(tv) == 2:
-        # if 'v6 = loadVV' in tvv:
-        #   print(1)
-        leftcon = '\n'.join(tt[ind+1:])
-        if not '//' in tvv and ind < flen-1 and tv[0] in leftcon:
-          for i in range(ind+1, flen):
-            laterBreak = False
-            # v6 = loadVV
-            # v6 = v6+".zip"
+      # if '.ndk_wrapper.ets.Index.setUserData' in tvv:
+      #   print(1)
+      
+      # 值代入
+      replacedValue = False
+      if len(tv) == 2 and len(tv[1]) < 200:        
+        # v1 = a1//xxx
+        # v0 = v1(v0) v2 = v0.xx  ===> v2 = v1(v0).xx v2 = v1(v1(v0)) replace multi-times
+        if not '//' in tvv and ind < flen-1 and tv[0] not in tv[1]:
+          replacedValue = True
 
+          for i in range(ind+1, flen):
+            leftcon = '\n'.join(tt[i:])
+            if not tv[0] in leftcon:
+              break            
+            laterBreak = False
             # set value again
-            if tt[i].strip().startswith(tv[0]+' = '):
-              if '= '+tv[0] in tt[i]:
+            if tt[i].strip().startswith(tv[0]+' = ') or tt[i].strip().startswith(tv[0]+'.') or tt[i].strip().startswith(tv[0]+'['):
+              # v6 = v6+".zip"
+              # v0 = v2(v0)
+              if ' = ' in tt[i] and tv[0] in tt[i].split(' = ')[1]:
                 laterBreak = True
               else:
                 break
@@ -241,27 +290,48 @@ def simplifyy(rawCon, loadVAR):
               continue
 
             # replace value
-            if not '.' in tt[i].split(' = ')[0]:
+
+            # not function call
+            # v3 = (t194@_modules_/lockUtil/ets/login/LoginManager)
+            if ( ' = ' not in tt[i] or not '.' in tt[i].split(' = ')[0] ) and (not tv[1].endswith(')') or (tv[1].startswith('(') and '@' in tv[1]) ):
               tt[i] = tt[i].replace(tv[0]+'.', tv[1]+'.')
+            if ' = ' not in tt[i] or not '[' in tt[i].split(' = ')[0]:
+              tt[i] = tt[i].replace(tv[0]+'[', tv[1]+'[')
             tt[i] = tt[i].replace(tv[0]+'+', tv[1]+'+')
             tt[i] = tt[i].replace(tv[0]+',', tv[1]+',')
             tt[i] = tt[i].replace(tv[0]+')', tv[1]+')')
             tt[i] = tt[i].replace(tv[0]+'(', tv[1]+'(')
-            tt[i] = tt[i].replace(tv[0]+'/', tv[1]+'/')
-            tt[i] = re.sub(tv[0]+'$', tv[1], tt[i])
-
+            tt[i] = tt[i].replace(tv[0]+'/', tv[1]+'/')            
+            try:
+              tt[i] = re.sub(tv[0]+'$', tv[1], tt[i]) # type: ignore
+            except:
+              # ignore when tv contain special chars
+              pass
+            
             if laterBreak:
               break
-      
-      if len(tv) != 2 or ind == 0 or ind == flen -1 or \
-        tv[0] in '\n'.join(tt[ind+1:]).split(tv[0]+' = ')[0] or '.' in tv[0] or '[' in tv[0]:
+
+      # 去掉未使用值
+      changedCon = '\n'.join(tt[ind+1:]).split(tv[0]+' = ')[0]
+      used = False
+      if tv[0] in changedCon:
+        used = True
+        if len(tv) == 2:
+          # v0, v10
+          pattern = re.compile(tv[0]+r'[^\d]+')
+          matchs = pattern.findall(changedCon)
+          if matchs:
+            used = True
+          else:
+            used = False
+      if not replacedValue or '.' in tv[0] or '[' in tv[0] or used:
         # v6.memLevel
-        # not used var
+        # v6[v3]
         funout.append(vv)
  
     outout.append('\n'.join(funout))
       
-  return '.function any'.join(outout)
+  return '\n\n.function any'.join(outout)
 
 def getParamList(startVar, count, start=0, end=0):
   # v5, 2 => v5, v6
@@ -273,24 +343,51 @@ def getParamList(startVar, count, start=0, end=0):
   return ', '.join(out)
 
 
+def isCommand(sstr:str):
+  ins = ['callruntime.isfalse', 'definepropertybyname', 'callruntime.istrue', 'callruntime.ldlazymodulevar', 'wide.getmodulenamespace', 'callruntime.ldsendablevar', 'stsuperbyvalue', 'wide.stlexvar', 'throw.undefinedifholewithname', 'closeiterator', 'stmodulevar', 'jstricteqnull', 'setobjectwithproto', 'apply', 'newobjrange', 'callruntime.createprivateproperty', 'jeqnull', 'noteq', 'stglobalvar', 'shl2', 'tonumeric', 'getmodulenamespace', 'xor2', 'asyncgeneratorreject', 'eq', 'stobjbyvalue', 'asyncfunctionenter', 'newobjapply', 'ldhole', 'createiterresultobj', 'greatereq', 'callrange', 'stownbyvalue', 'wide.ldpatchvar', 'jnstrictequndefined', 'getnextpropname', 'stlexvar', 'newlexenv', 'stownbynamewithnameset', 'callargs3', 'callruntime.ldsendableexternalmodulevar', 'wide.supercallthisrange', 'stricteq', 'wide.ldexternalmodulevar', 'return', 'createemptyarray', 'ldglobalvar', 'ldprivateproperty', 'ldfalse', 'lesseq', 'wide.copyrestargs', 'wide.stobjbyindex', 'jstrictequndefined', 'inc', 'istrue', 'instanceof', 'stprivateproperty', 'ldlocalmodulevar', 'wide.callthisrange', 'jnstricteqz', 'not', 'wide.newobjrange', 'ldundefined', 'ldlexvar', 'ldobjbyindex', 'createobjectwithbuffer', 'asyncfunctionresolve', 'wide.ldobjbyindex', 'exp', 'getiterator', 'mod2', 'setgeneratorstate', 'wide.stownbyindex', 'and2', 'defineclasswithbuffer', 'stobjbyname', 'ldobjbyname', 'suspendgenerator', 'tonumber', 'lda.str', 'jnenull', 'jneundefined', 'or2', 'ldnull', 'createobjectwithexcludedkeys', 'sta', 'jnez', 'callruntime.widestsendablevar', 'ldexternalmodulevar', '.catchall', 'dec', 'callruntime.topropertykey', 'jstricteqz', 'ashr2', 'wide.supercallarrowrange', 'isin', 'starrayspread', 'stsuperbyname', 'ldsymbol', 'callthisrange', 'mov', 'nop', 'copydataproperties', 'ldnewtarget', 'getunmappedargs', 'ldthis', 'jne', 'jeqz', 'returnundefined', 'createregexpwithliteral', 'div2', 'typeof', 'trystglobalbyname', 'jstricteq', 'neg', 'callruntime.stsendablevar', 'debugger', 'asyncfunctionreject', 'stobjbyindex', 'jequndefined', 'throw.undefinedifhole', 'wide.ldlocalmodulevar', 'stownbyvaluewithnameset', 'gettemplateobject', 'callruntime.ldsendableclass', 'creategeneratorobj', 'throw.ifsupernotcorrectcall', 'newlexenvwithname', 'callthis3', 'callthis0', 'callruntime.defineprivateproperty', 'getpropiterator', 'tryldglobalbyname', 'throw.ifnotobject', 'mul2', 'add2', 'dynamicimport', 'delobjprop', 'shr2', 'callruntime.widenewsendableenv', 'callruntime.newsendableenv', 'resumegenerator', 'isfalse', 'ldthisbyvalue', 'ldobjbyvalue', 'callarg1', 'callarg0', 'ldsuperbyname', 'ldfunction', 'poplexenv', 'ldtrue', 'ldglobal', 'jeq', 'throw.patternnoncoercible', 'stthisbyname', 'jnstricteqnull', 'ldsuperbyvalue', 'jmp', 'callthis2', 'copyrestargs', 'callthis1', 'throw.constassignment', 'lda', 'ldai', 'ldbigint', 'definemethod', 'getresumemode', 'createemptyobject', 'callargs2', 'asyncgeneratorresolve', 'sttoglobalrecord', 'stownbyindex', 'throw.deletesuperproperty', 'definefieldbyname', 'jnstricteq', 'supercallarrowrange', 'less', 'asyncfunctionawaituncaught', 'ldthisbyname', 'stconsttoglobalrecord', 'wide.createobjectwithexcludedkeys', 'wide.ldlexvar', 'fldai', 'createasyncgeneratorobj', 'createarraywithbuffer', 'callruntime.callinit', 'ldnan', 'throw.notexists', 'wide.newlexenv', 'wide.newlexenvwithname', 'strictnoteq', 'sub2', 'wide.stpatchvar', 'wide.callrange', 'supercallthisrange', 'wide.stmodulevar', 'callruntime.notifyconcurrentresult', 'stthisbyvalue', 'definegettersetterbyvalue', 'greater', 'ldinfinity', 'testin', 'stownbyname', 'getasynciterator', 'definefunc', 'supercallspread', 'throw']
+
+  sins = ['jump_label_', 'try_begin_label', 'handler_begin_label']
+
+  cmd = sstr.strip().split()[0]
+  isCmd = False
+  if cmd in ins:
+    isCmd = True
+  else:
+    for s in sins:
+      if cmd.startswith(s):
+        isCmd = True
+        break
+
+  return isCmd
+
+def takecareChinese(s):
+  out = s
+  try:
+    out = s.encode('latin1').decode('utf8', 'ignore')
+  except:
+    pass
+
+  return out
+
 def simplify(hap, outDir):
   sep = '    '
   subSep = '  '
   out = ''
+  outarr = []
   handledCMD = []
-  loadVAR = 'loadVV'
+  loadVAR = '(loadSlot'
   notTranslate = []
-  multi_line = False
-  multi_line_buffer = False
   multi_line_str = ''
   logging.info('Decompile abc...')
-  
-  encode = 'latin1'
+
+  saveFileEncode = 'utf8'
   # create file
-  with open(hap+'.ss', 'w', encoding='utf8') as f:
-    f.write(simplifyy(out, loadVAR))
-  with open(hap+'.raw', 'w', encoding='utf8') as f:
-    f.write(out)
+  with open(hap+'.ss', 'w', encoding=saveFileEncode) as f:
+    f.write('')
+  with open(hap+'.ss0', 'w', encoding=saveFileEncode) as f:
+    f.write('')
+  with open(hap+'.raw', 'w', encoding=saveFileEncode) as f:
+    f.write('')
 
   moduleTag = []
   importLibs = []
@@ -304,23 +401,32 @@ def simplify(hap, outDir):
     started = False
     accValue = 'acc'    
     staNeedReset = ''
+    slotInd = ''
+    line = ''
+    strBegin = False
     while True:
       try:
         line = f.readline()
       except Exception as ee:
         logging.error(str(ee)+' '+line)
         line = ''
-        out += '\n//*****decode error*****//\n'
-        out += '\n//*****{}*****//\n'.format(ee)
+        outarr.append('\n//*****decode error*****//\n')
+        outarr.append('\n//*****{}*****//\n'.format(ee))
       if not line: # at least '\n'
         break
 
       # lib import
-      if moduleStart and '[ ModuleTag: ' in line:
+      if moduleStart and 'ModuleTag: ' in line:
         # ['LOCAL_EXPORT', 'REGULAR_IMPORT', 'INDIRECT_EXPORT', 'STAR_EXPORT', 'NAMESPACE_IMPORT']
-        line = line.split(' [ ')[-1]
-        line = line.split('; ]}')[0]
-        libs = line.split('; ')
+        if ']}' in line:
+          line = line.split(' [ ')[-1]
+          line = line.split('; ]}')[0]
+          libs = line.split('; ')
+        else:
+          # 分布在多行
+          line = line.strip().removesuffix(';')
+          libs = []
+          libs.append(line)
         for lb in libs:
           tmp = ''
           localname = ''
@@ -343,25 +449,51 @@ def simplify(hap, outDir):
             elif tt[0] == 'export_name':
               exportname = tt[1]
             else:
-              logging.error(tt[0])
-              return
+              logging.error(line)
+              continue
           if tmp == 'REGULAR_IMPORT':
             # importLibs.append('import '+importname+' from '+libname+' as '+localname)
             if libname.startswith('@app:'):
               if localname in soModuleMap.keys() and libname.split('/')[-1] != soModuleMap.get(localname, ''):
                 logging.error('lib name collision '+ libname+' -local- '+localname)
               soModuleMap[localname] = libname.split('/')[-1]
-            # else:
-            #   libModuleMap[localname] = libname
+            else:
+              tmplib = libname
+              if importname != 'default' and importname != localname:
+                tmplib += '.'+importname
+              if 'Logger' == localname or libname.endswith('/index') or libname.endswith('/Index'):
+                continue
+              tmp = libModuleMap.get(localname, '')
+              if tmp:
+                if tmplib not in tmp :
+                  # logging.error('(import)name collision: ('+ tmplib+') and ('+libModuleMap.get(localname, '')+') => '+localname+' (add together)')
+                  tmplib += ' || '+tmp
+                else:
+                  tmplib = tmp
+              if tmplib:
+                libModuleMap[localname] = tmplib
               
-          elif tmp == 'NAMESPACE_IMPORT' or tmp == 'STAR_EXPORT' or tmp == 'INDIRECT_EXPORT':
+          elif tmp == 'NAMESPACE_IMPORT' or tmp == 'STAR_EXPORT' or tmp == 'LOCAL_EXPORT':
             # importLibs.append('import '+importname+' as '+localname)
             pass
-          elif tmp == 'LOCAL_EXPORT':
-            libModuleMap[localname] = libname
+          elif tmp == 'INDIRECT_EXPORT':
+            # 'LOCAL_EXPORT' no need
+            #  INDIRECT_EXPORT impl?
+            pass
+            # tmplib = libname
+            
+            # tmp = libModuleMap.get(exportname, '')
+            # if tmp:
+            #   if tmplib not in tmp:
+            #     # logging.error('(export)name collision: ('+ tmplib+') and ('+libModuleMap.get(exportname, '')+') => '+exportname+' (add together)')
+            #     tmplib += ' || ' + tmp
+            #   else:
+            #     tmplib = tmp
+            # if tmplib:
+            #   libModuleMap[exportname] = tmplib
           else:
-            logging.error(lb)
-            return
+            logging.error(line)
+            continue
         
       if line == '# RECORDS\n':
         # print(moduleTag)
@@ -372,25 +504,27 @@ def simplify(hap, outDir):
 
       if line.startswith('.function '):
         started = True
-        out += '\n'+line
+        outarr.append('\n'+line)
         continue
       elif started and ( line.startswith('L_ESSlotNumberAnnotation:') or line.startswith('# ===========') ):
         # avoid lda.str parse error
         started = False
-        # out += '}\n\n'
+        # outarr.append('}\n\n')
         accValue = ''
 
         # Append to file 5M
-        if len(out) > 5 * 1024 * 1024:
-          with open(hap+'.raw', 'a', encoding='utf8') as f:
-            f.write(out.encode('latin1').decode('utf8'))
-          with open(hap+'.ss', 'a', encoding='utf8') as ff:
-            ff.write(simplifyy(out, loadVAR).encode('latin1').decode('utf8'))
-            out = ''
+        if len(outarr) > 5 * 1024 * 1024 / 10:
+          with open(hap+'.raw', 'a', encoding=saveFileEncode) as f2:
+            f2.write(''.join(outarr))
+          with open(hap+'.ss', 'a', encoding=saveFileEncode) as ff:
+            ff.write(simplifyy(outarr, loadVAR, hap))
+            outarr = []
 
         continue
 
+      # https://developer.huawei.com/consumer/cn/doc/harmonyos-guides-V5/arkts-bytecode-fundamentals-V5
       if started:
+        code = ''
         try:
           code = line.strip()
           if not code:
@@ -399,86 +533,91 @@ def simplify(hap, outDir):
           cmd = code.split()[0]
           tc = code.split()
 
-          if multi_line:
-            if code != '"' and code != '}"':
-              if code.startswith('"'):
-                multi_line_str += ' '+code
-                continue
-              if not code.endswith('"'):
-                multi_line_str += ' '+code
-                continue
-            
-            multi_line_str += ' '+code
-            accValue = multi_line_str
-            multi_line = False
-            multi_line_str = ''
-            continue
-          
-          else:
-            if code == '"' or code == '}"':
-              if len(handledCMD) > 4:
-                logging.error(' # '.join(handledCMD[-5:]))
-              else:
-                logging.error(' # '.join(handledCMD))
-
-          if multi_line_buffer:
-            if not code.endswith("]}"):
+          if strBegin:
+            if isCommand(line):
+              strBegin = False
+            else:
               multi_line_str += ' '+code
+              accValue = takecareChinese(multi_line_str)
               continue
-            multi_line_str += ' '+code
-            accValue = multi_line_str
-            multi_line_buffer = False
-            multi_line_str = ''
-            continue
 
           if code.startswith('lda '):
             accValue = code.split()[1]
           elif code.startswith('lda.str '):
             tmps = ' '.join(tc[1:])
-            # print('start='+tmps+'=')
-            # multi-line
-            if not tmps.endswith('"') or tmps == '"':
-              multi_line = True
-              
+            strBegin = True
             multi_line_str = tmps
-            accValue = multi_line_str
+            accValue = takecareChinese(multi_line_str)
+
+          elif code.startswith('createobjectwithbuffer '):
+            tmps = ' '.join(tc[2:]).strip('"')
+            strBegin = True
+            multi_line_str = tmps
+            accValue = takecareChinese(multi_line_str)
+
+          elif code.startswith('createarraywithbuffer '):
+            tmps = ' '.join(tc[2:]).strip('"')
+            strBegin = True
+            multi_line_str = tmps
+            accValue = takecareChinese(multi_line_str)
 
           elif code.startswith('stownbyindex '):
-            out += sep+tc[2].strip(',')+'['+tc[3]+'] = '+accValue+'\n'
+            outarr.append(sep+tc[2].strip(',')+'['+tc[3]+'] = '+accValue+'\n')
           elif code.startswith('stobjbyindex '):
-            out += sep+tc[2].strip(',')+'['+tc[3]+'] = '+accValue+'\n'
+            outarr.append(sep+tc[2].strip(',')+'['+tc[3]+'] = '+accValue+'\n')
           elif code.startswith('wide.stownbyindex '):
-            out += sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n'
+            outarr.append(sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n')
           elif code.startswith('wide.stobjbyindex '):
-            out += sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n'
+            outarr.append(sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n')
 
           # ld + sta + throw
           # ld + throw
+          # ld
+          # ld + sta
           elif code.startswith('sta '):
-            out += sep+code.split()[1]+' = '+accValue+'\n'
-            if accValue == loadVAR:
-              staNeedReset = code.split()[1]
-          elif cmd in ['callruntime.ldsendablevar', 'callruntime.ldsendableexternalmodulevar', 'ldexternalmodulevar', 'ldlexvar', 'ldlocalmodulevar', 'wide.ldlexvar', 'wide.ldlocalmodulevar', 'wide.ldexternalmodulevar', 'wide.ldpatchvar']:
-            accValue = loadVAR
+            outarr.append(sep+code.split()[1]+' = '+accValue+'\n')
+            if accValue.startswith('(loadSlot'):
+              staNeedReset = code.split()[1] +'@slot'+slotInd
+          elif cmd in ['callruntime.ldlazymodulevar', 'callruntime.ldsendablevar', 'callruntime.ldsendableexternalmodulevar', 'ldexternalmodulevar', 'ldlocalmodulevar', 'wide.ldlocalmodulevar', 'wide.ldexternalmodulevar', 'wide.ldpatchvar']:
             staNeedReset = ''
+            slotInd = '(loadSlot-module {})'.format(tc[1])
+            accValue = slotInd
+          elif cmd in ['ldlexvar', 'wide.ldlexvar']:
+            staNeedReset = ''
+            slotInd = '(loadSlot {})'.format(''.join(tc[1:]))
+            accValue = slotInd
           elif code.startswith('throw.undefinedifholewithname '):
-            if accValue != loadVAR:
+            if not accValue.startswith('(loadSlot'):
               logging.error('#'.join(handledCMD[-3:]) + ' #'+accValue+' #'+loadVAR)
-              out += "****lda.str error ????**** \n"
+              outarr.append("****lda.str error ????**** \n")
 
             accValue = tc[1].strip('"')
             tn = soModuleMap.get(accValue, '')
             if tn:
               tn = '(lib'+tn+'.so)'
+              accValue += tn
             else:
               tn = libModuleMap.get(accValue, '')
               if tn:
-                if tn.startswith('@bundle:'):
-                  tn = tn.split('@')[-1]
-                tn = '@_modules_/'+tn
-            accValue += tn
+                if ' || ' not in tn:
+                  if tn.startswith('@bundle:'):
+                    tn = tn.split('@')[-1]
+                    tn = '@_modules_/'+tn
+                else:
+                  tns = tn.split(' || ')
+                  bundleStr = ''
+                  # @package:  and @bundle:  优先bundle
+                  for tnss in tns:
+                    if tnss.startswith('@bundle:'):
+                      bundleStr += tnss +' || '
+                  if bundleStr:
+                    tn = bundleStr.removesuffix(' || ')
+                accValue = '('+accValue+tn+')'
+              else:
+                accValue = '('+accValue+'@'+slotInd+')'
             if staNeedReset:
-              out += sep+staNeedReset+' = '+accValue+'\n'
+              staNeedReset = staNeedReset.split('@slot')[0]
+              outarr.append(sep+staNeedReset+' = '+accValue+'\n')
               staNeedReset = ''
             
 
@@ -499,7 +638,7 @@ def simplify(hap, outDir):
 
           elif code.startswith('starrayspread '):
             # array copy
-            out += sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n'
+            outarr.append(sep+tc[1].strip(',')+'['+tc[2]+'] = '+accValue+'\n')
             accValue = 'len-'+tc[1].strip(',')
           elif code.startswith('ldobjbyname '):
             accValue = accValue+'.'+tc[2].strip('"')
@@ -525,65 +664,67 @@ def simplify(hap, outDir):
             accValue = tc[2]
 
           elif code.startswith('delobjprop '):
-            out += sep+'del '+tc[1]+'.'+accValue+'\n'
+            outarr.append(sep+'del '+tc[1]+'.'+accValue+'\n')
           elif code.startswith('setobjectwithproto '):
-            out += sep+accValue+'__proto__ = '+tc[2]+'\n'
+            outarr.append(sep+accValue+'__proto__ = '+tc[2]+'\n')
           elif code.startswith('copydataproperties '):
-            out += sep+tc[1]+' = '+accValue+'\n'
+            outarr.append(sep+tc[1]+' = '+accValue+'\n')
             accValue = tc[1]
           elif code.startswith('stownbyvaluewithnameset '):
-            out += sep+tc[2].strip(',')+'.'+tc[3]+' = '+accValue+'\n'
+            outarr.append(sep+tc[2].strip(',')+'.'+tc[3]+' = '+accValue+'\n')
 
           elif code.startswith('stownbynamewithnameset '):
-            out += sep+tc[3]+'.'+tc[2].strip(',')+' = '+accValue+'\n'
+            outarr.append(sep+tc[3]+'.'+tc[2].strip(',')+' = '+accValue+'\n')
 
           elif code.startswith('stobjbyname '):
-            out += sep+tc[3]+'.'+tc[2].strip(',').strip('"') +' = '+accValue+'\n'
+            outarr.append(sep+tc[3]+'.'+tc[2].strip(',').strip('"') +' = '+accValue+'\n')
           elif code.startswith('stobjbyvalue '):
-            out += sep+tc[2].strip(',')+'.'+tc[3] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2].strip(',')+'.'+tc[3] +' = '+accValue+'\n')
           elif code.startswith('stownbyvalue '):
-            out += sep+tc[2].strip(',')+'.'+tc[3] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2].strip(',')+'.'+tc[3] +' = '+accValue+'\n')
 
           elif code.startswith('stthisbyvalue '):
-            out += sep+'this.'+tc[2] +' = '+accValue+'\n'
+            outarr.append(sep+'this.'+tc[2] +' = '+accValue+'\n')
           elif code.startswith('stthisbyname '):
-            out += sep+'this.'+tc[2] +' = '+accValue+'\n'
+            outarr.append(sep+'this.'+tc[2] +' = '+accValue+'\n')
           elif code.startswith('stsuperbyname '):
-            out += sep+tc[3]+'.super.'+tc[2].strip(',') +' = '+accValue+'\n'
+            outarr.append(sep+tc[3]+'.super.'+tc[2].strip(',') +' = '+accValue+'\n')
 
           elif code.startswith('trystglobalbyname '):
-            out += sep+tc[2] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2] +' = '+accValue+'\n')
           elif code.startswith('stglobalvar '):
-            out += sep+tc[2] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2] +' = '+accValue+'\n')
           elif code.startswith('stprivateproperty '):
-            out += sep+tc[4]+'.slot-'+tc[2].strip(',')+'-'+tc[3].strip(',') +' = '+accValue+'\n'
+            outarr.append(sep+tc[4]+'.slot-'+tc[2].strip(',')+'-'+tc[3].strip(',') +' = '+accValue+'\n')
           elif code.startswith('callruntime.defineprivateproperty '):
-            out += sep+tc[4]+'.slot-'+tc[2].strip(',')+'-'+tc[3].strip(',') +' = '+accValue+'\n'
+            outarr.append(sep+tc[4]+'.slot-'+tc[2].strip(',')+'-'+tc[3].strip(',') +' = '+accValue+'\n')
           elif code.startswith('callruntime.createprivateproperty '):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
           elif code.startswith('callruntime.callinit '):
-            out += sep+'this='+tc[2]+'\n'
+            outarr.append(sep+'this='+tc[2]+'\n')
             accValue = accValue+'()'
           elif code.startswith('stsuperbyvalue '):
-            out += sep+tc[2].strip(',')+'.super.'+tc[3] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2].strip(',')+'.super.'+tc[3] +' = '+accValue+'\n')
 
           elif code.startswith('sttoglobalrecord '):
-            out += sep+tc[2] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2] +' = '+accValue+'\n')
           elif code.startswith('stconsttoglobalrecord '):
-            out += sep+tc[2] +' = '+accValue+'\n'
+            outarr.append(sep+tc[2] +' = '+accValue+'\n')
 
 
           elif code.startswith('supercallspread '):
             accValue = accValue+'('+','.join(tc[2:])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('throw.ifsupernotcorrectcall '):
-            out += sep+'throw'+'\n'
+            outarr.append(sep+'throw'+'\n')
           elif code.startswith('throw.ifnotobject '):
-            out += sep+' object !='+tc[1]+'? throw '+'\n'
+            outarr.append(sep+' object !='+tc[1]+'? throw '+'\n')
             
           
-          elif cmd in ['stmodulevar', 'stlexvar', 'wide.stlexvar', 'wide.stmodulevar']:
-            out += sep+'//TD slot- '+accValue+'(save)\n'
+          elif cmd in ['stmodulevar', 'wide.stmodulevar']:
+            outarr.append(sep+accValue+'(saveSlot-module {})\n'.format(tc[1]))
+          elif cmd in ['stlexvar', 'wide.stlexvar']:
+            outarr.append(sep+accValue+'(saveSlot {})\n'.format(''.join(tc[1:])))
           elif code.startswith('createemptyobject'):
             accValue = 'OBJ'
           elif code.startswith('createemptyarray '):
@@ -615,96 +756,85 @@ def simplify(hap, outDir):
           elif code.startswith('defineclasswithbuffer ') or code.startswith('callruntime.definesendableclass'):
             accValue = tc[2].removesuffix(',')+'(super:'+tc[-1]+')'
           elif code.startswith('definefunc '):
-            accValue = tc[2]
+            accValue = tc[2].rstrip(',')
           elif code.startswith('definemethod '):
-            accValue = tc[2]
-          elif code.startswith('definefieldbyname ') or code.startswith('callruntime.definefieldbyvalue ') or code.startswith('callruntime.definefieldbyindex '):
-            out += sep+tc[3]+'.'+tc[2].strip(',').strip('"')+' = '+accValue+'\n'
+            accValue = tc[2].rstrip(',')
+          elif code.startswith('definefieldbyname ') or code.startswith('callruntime.definefieldbyvalue ') or code.startswith('callruntime.definefieldbyindex ') or code.startswith('definepropertybyname '):
+            outarr.append(sep+tc[3]+'.'+tc[2].strip(',').strip('"')+' = '+accValue+'\n')
           elif code.startswith('definegettersetterbyvalue '):
-            out += sep+'//'+tc[1]+'.'+tc[2]+': {get:'+tc[3]+', set:'+tc[4]+'}'+'\n'
+            outarr.append(sep+'//'+tc[1]+'.'+tc[2]+': {get:'+tc[3]+', set:'+tc[4]+'}'+'\n')
 
-          elif code.startswith('isfalse'):
+          elif code.startswith('isfalse') or code.startswith('callruntime.isfalse'):
             accValue = accValue+' == false'
-            out += sep+'//'+accValue+'\n'
-          elif code.startswith('istrue'):
+          elif code.startswith('istrue') or code.startswith('callruntime.istrue'):
             accValue = accValue+' == true'
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('stricteq '):
             accValue = accValue+' === '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('strictnoteq '):
             accValue = accValue+' !== '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('eq '):
             accValue = accValue+' == '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('noteq '):
             accValue = accValue+' !== '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('less '):
             accValue = accValue+' > '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('lesseq '):
             accValue = accValue+' >== '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('greater '):
             accValue = accValue+' < '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('greatereq '):
             accValue = accValue+' <== '+tc[2]
-            out += sep+'//'+accValue+'\n'
           elif code.startswith('isin '):
             accValue = tc[2] +' in '+accValue
-            out += sep+'//'+accValue+'\n'
           
           elif code.startswith('jnez '):
-            out += sep+'('+accValue+') != 0 : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') != 0 : jmp '+tc[1]+'\n')
           elif code.startswith('jeqz '):
-            out += sep+'('+accValue+') == 0 : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') == 0 : jmp '+tc[1]+'\n')
 
           elif code.startswith('jeq '):
-            out += sep+'('+accValue+') == '+tc[1].strip(',')+' : jmp '+tc[2]+'\n'
+            outarr.append(sep+'('+accValue+') == '+tc[1].strip(',')+' : jmp '+tc[2]+'\n')
           elif code.startswith('jne '):
-            out += sep+'('+accValue+') != '+tc[1].strip(',')+' : jmp '+tc[2]+'\n'
+            outarr.append(sep+'('+accValue+') != '+tc[1].strip(',')+' : jmp '+tc[2]+'\n')
           elif code.startswith('jeqnull '):
-            out += sep+'('+accValue+') == null : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') == null : jmp '+tc[1]+'\n')
           elif code.startswith('jnenull '):
-            out += sep+'('+accValue+') != null : jmp '+tc[1]+'\n'          
+            outarr.append(sep+'('+accValue+') != null : jmp '+tc[1]+'\n')          
           elif code.startswith('jstricteq '):
-            out += sep+'('+accValue+') === '+tc[1].strip(',')+' : jmp '+tc[2]+'\n'
+            outarr.append(sep+'('+accValue+') === '+tc[1].strip(',')+' : jmp '+tc[2]+'\n')
           elif code.startswith('jnstricteq '):
-            out += sep+'('+accValue+') !== '+tc[1].strip(',')+' : jmp '+tc[2]+'\n'
+            outarr.append(sep+'('+accValue+') !== '+tc[1].strip(',')+' : jmp '+tc[2]+'\n')
           elif code.startswith('jequndefined '):
-            out += sep+'('+accValue+') == undefined : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') == undefined : jmp '+tc[1]+'\n')
           elif code.startswith('jneundefined '):
-            out += sep+'('+accValue+') != undefined : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') != undefined : jmp '+tc[1]+'\n')
           elif code.startswith('jstricteqz '):
-            out += sep+'('+accValue+') === 0 : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') === 0 : jmp '+tc[1]+'\n')
           elif code.startswith('jnstricteqz '):
-            out += sep+'('+accValue+') !== 0 : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') !== 0 : jmp '+tc[1]+'\n')
           elif code.startswith('jstricteqnull '):
-            out += sep+'('+accValue+') === null : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') === null : jmp '+tc[1]+'\n')
           elif code.startswith('jnstricteqnull '):
-            out += sep+'('+accValue+') !== null : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') !== null : jmp '+tc[1]+'\n')
           elif code.startswith('jstrictequndefined '):
-            out += sep+'('+accValue+') === undefined : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') === undefined : jmp '+tc[1]+'\n')
           elif code.startswith('jnstrictequndefined '):
-            out += sep+'('+accValue+') !== undefined : jmp '+tc[1]+'\n'
+            outarr.append(sep+'('+accValue+') !== undefined : jmp '+tc[1]+'\n')
           elif code.startswith('jmp '):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
 
-          elif code.startswith('throw'):
-            out += sep+'throw '+accValue+'\n'
+          elif code == 'throw':
+            outarr.append(sep+'throw '+accValue+'\n')
           elif code.startswith('throw.notexists'):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
           elif code.startswith('throw.undefinedifhole'):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
           elif code.startswith('throw.deletesuperproperty'):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
           elif code.startswith('throw.patternnoncoercible'):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
           elif code.startswith('throw.constassignment'):
-            out += sep+code+'\n'
+            outarr.append(sep+code+'\n')
 
           elif code.startswith('wide.getmodulenamespace'):
             accValue = 'getmodulenamespace('+tc[1]+')'
@@ -743,14 +873,6 @@ def simplify(hap, outDir):
           elif code.startswith('exp '):
             accValue = tc[2]+'**'+accValue
 
-          elif code.startswith('createobjectwithbuffer '):
-            accValue = ' '.join(tc[2:]).strip('"')
-            if not accValue.endswith(']}'):
-              multi_line_buffer = True
-          elif code.startswith('createarraywithbuffer '):
-            accValue = ' '.join(tc[2:]).strip('"')
-            if not accValue.endswith(']}'):
-              multi_line_buffer = True
           elif code.startswith('createobjectwithexcludedkeys '):
             accValue = tc[2].strip(',')+'(exclude-'+tc[3]+' count:'+tc[1].strip(',')+')'
           elif code.startswith('wide.createobjectwithexcludedkeys '):
@@ -759,64 +881,64 @@ def simplify(hap, outDir):
 
           elif code.startswith('stownbyname '):
             tt = tc[2].strip(',').strip('"')
-            out += sep+tc[3]+'.'+tt+' = '+accValue+'\n'
+            outarr.append(sep+tc[3]+'.'+tt+' = '+accValue+'\n')
           elif code.startswith('newobjrange '):
             accValue = tc[3]+'('+getParamList(tc[3], tc[2], 1, 0)+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('wide.newobjrange '):
             accValue = tc[2]+'('+getParamList(tc[2], tc[1], 1, 0)+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callthisrange '):
             accValue = accValue+'('+getParamList(tc[3], tc[2], 1, 1)+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('wide.callthisrange '):
             accValue = accValue+'('+getParamList(tc[2], tc[1], 1, 1)+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callrange '):
             accValue = accValue+'('+getParamList(tc[3], tc[2])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('wide.callrange '):
             accValue = accValue+'('+getParamList(tc[2], tc[1])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('supercallarrowrange '):
             accValue = accValue+'.super('+getParamList(tc[3], tc[2])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('wide.supercallarrowrange '):
             accValue = accValue+'.super('+getParamList(tc[2], tc[1])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callthis0 '):
             accValue = accValue+'()'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callthis1 '):
             accValue = accValue+'('+tc[3]+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callthis2 '):
             accValue = accValue+'('+tc[3]+tc[4]+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callthis3 '):
             accValue = accValue+'('+tc[3]+tc[4]+tc[5]+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callarg0 '):
             accValue = accValue+'()'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callarg1 '):
             accValue = accValue+'('+tc[2]+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callargs2 '):
-            accValue = accValue+'('+tc[3]+tc[3]+')'
-            out += sep+'//'+accValue+'\n'
+            accValue = accValue+'('+tc[2]+','+tc[3]+')'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('callargs3 '):
-            accValue = accValue+'('+tc[2]+tc[3]+tc[4]+')'
-            out += sep+'//'+accValue+'\n'
+            accValue = accValue+'('+tc[2]+','+tc[3]+','+tc[4]+')'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('supercallthisrange '):
             accValue = 'super'+'('+getParamList(tc[3], tc[2])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('wide.supercallthisrange '):
             accValue = 'super'+'('+getParamList(tc[2], tc[1])+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('apply '):
             accValue = tc[2].strip(',')+'.'+accValue+'('+tc[3]+')'
-            out += sep+'//'+accValue+'\n'
+            outarr.append(sep+'//'+accValue+'\n')
 
           elif code.startswith('mov '):
             # if tc[2] == 'a0':
@@ -825,20 +947,22 @@ def simplify(hap, outDir):
             #   tc[2] += '//NewTarget'
             # elif tc[2] == 'a2':
             #   tc[2] += '//this'
-            out += sep+tc[1].strip(',')+' = '+tc[2]+'\n'
+            outarr.append(sep+tc[1].strip(',')+' = '+tc[2]+'\n')
 
           
-          elif cmd in ['wide.newlexenvwithname', 'callruntime.newsendableenv', 'callruntime.stsendablevar', 'callruntime.widestsendablevar','callruntime.widenewsendableenv', 'newlexenvwithname', 'newlexenv', 'wide.newlexenv', 'returnundefined', 'poplexenv', 'callruntime.ldsendableclass', 'callruntime.notifyconcurrentresult', 'callruntime.topropertykey', 'debugger', 'nop']:
+          elif cmd in ['wide.newlexenvwithname', 'callruntime.newsendableenv', 'callruntime.stsendablevar', 'callruntime.widestsendablevar','callruntime.widenewsendableenv', 'newlexenvwithname', 'newlexenv', 'wide.newlexenv', 'poplexenv', 'callruntime.ldsendableclass', 'callruntime.notifyconcurrentresult', 'callruntime.topropertykey', 'debugger', 'nop']:
             pass
           elif code.startswith('return'):
-            out += sep+'return '+accValue+'\n'
+            outarr.append(sep+'return '+accValue+'\n')
+          elif code.startswith('returnundefined'):
+            outarr.append(sep+'return undefined'+'\n')
           elif code.startswith('ldfunction'):
             accValue = 'this'
           elif code.startswith('ldsymbol'):
             accValue = 'Symbol'
 
           elif code.startswith('wide.stpatchvar '):
-            out += sep+'//TD slot-'+tc[1]+' = '+accValue+'\n'
+            outarr.append(sep+'//TD slot-'+tc[1]+' = '+accValue+'\n')
 
           elif code.startswith('getnextpropname '):
             accValue = tc[1]+'.next()'
@@ -855,7 +979,7 @@ def simplify(hap, outDir):
           elif code.startswith('creategeneratorobj '):
             accValue = tc[1]+'.generator'
           elif code.startswith('setgeneratorstate '):
-            out += sep+accValue+'.generator = '+tc[1]+'\n'
+            outarr.append(sep+accValue+'.generator = '+tc[1]+'\n')
           elif code.startswith('asyncgeneratorresolve '):
             accValue = tc[1].strip(',')+'.generatorresolve('+tc[2]+tc[3]+')'
           elif code.startswith('getresumemode'):
@@ -867,10 +991,10 @@ def simplify(hap, outDir):
           
           elif code.startswith('asyncfunctionreject '):
             accValue = tc[1]+'.Promise.reject('+accValue+')'
-            # out += sep+'//TD asyncfunctionreject'+accValue+'\n'
+            # outarr.append(sep+'//TD asyncfunctionreject'+accValue+'\n')
           elif code.startswith('asyncfunctionresolve '):
             accValue = tc[1]+'.Promise.resolve('+accValue+')'
-            # out += sep+'//TD asyncfunctionresolve'+accValue+'\n'
+            # outarr.append(sep+'//TD asyncfunctionresolve'+accValue+'\n')
 
 
           elif code.startswith('createregexpwithliteral '):
@@ -893,47 +1017,47 @@ def simplify(hap, outDir):
           
 
           elif code.startswith('dynamicimport'):
-            out += sep+'import '+accValue+'\n'
+            outarr.append(sep+'import '+accValue+'\n')
           
           elif code.startswith('asyncfunctionenter'):
             accValue = 'asyncFun'
           elif code.startswith('asyncfunctionawaituncaught '):
-            accValue = 'await '+tc[1] +' '+accValue
-            out += sep+'//'+accValue+'\n'
+            accValue = 'await '+tc[1] +'('+accValue+')'
+            outarr.append(sep+'//'+accValue+'\n')
           elif code.startswith('suspendgenerator '):
             accValue = tc[1]
-            out += sep+'//'+tc[1]+'.suspend()'+'\n'
+            outarr.append(sep+'//'+tc[1]+'.suspend()'+'\n')
           elif code.startswith('resumegenerator'):
-            out += sep+'//'+accValue+'.resume()'+'\n'
+            outarr.append(sep+'//'+accValue+'.resume()'+'\n')
             
           elif code.startswith('jump_label_'):
-            out += subSep+code+'\n'
+            outarr.append(subSep+code+'\n')
           elif code.startswith('try_begin_label'):
-            out += subSep+code+'\n'
+            outarr.append(subSep+code+'\n')
           elif code.startswith('handler_begin_label'):
-            out += subSep+code+'\n'
+            outarr.append(subSep+code+'\n')
             
           else:
             if not cmd in notTranslate and not cmd.startswith('try_') and not cmd.startswith('handler_') and not cmd.startswith('.catchall') and not cmd == '}':
-              out += '*******str error ({})********\n'.format(cmd)
+              outarr.append('*******str error ({})********\n'.format(cmd))
               notTranslate.append(cmd) 
             if code == '}':
               # end of function
-              out += '}\n'
+              outarr.append('}\n')
             else:
-              out += sep+'//TD '+code+'\n'
+              outarr.append(sep+'//TD '+code+'\n')
         except Exception as e:
-          out += sep+code+'\n'
+          outarr.append(sep+code+'\n')
           logging.error('=error '+code+' '+str(e))
           import traceback
           traceback.print_exc()
   
   if notTranslate:
     logging.info('Not translate '+str(notTranslate))
-  with open(hap+'.raw', 'a', encoding='utf8') as f:
-    f.write(out.encode('latin1').decode('utf8'))
-  with open(hap+'.ss', 'a', encoding='utf8') as f:
-    f.write(simplifyy(out, loadVAR).encode('latin1').decode('utf8'))
+  with open(hap+'.raw', 'a', encoding=saveFileEncode) as f:
+    f.write(''.join(outarr)) # .encode('latin1').decode('utf8')
+  with open(hap+'.ss', 'a', encoding=saveFileEncode) as f:
+    f.write(simplifyy(outarr, loadVAR, hap))
 
 
 def disasm(hap, odir, disasmBin):
@@ -956,7 +1080,7 @@ def disasm(hap, odir, disasmBin):
     if f.endswith('.abc'):
       logging.info('Disasm '+f)
       outfile = pp+f+'.ets'
-      if not doneDisasm:
+      if forceOverride or not doneDisasm:
         cmd = disasmBin+' '+pp+f+' '+outfile
         out = execShell(cmd)
         if 'e' in out.keys():
@@ -964,11 +1088,11 @@ def disasm(hap, odir, disasmBin):
           continue
       else:
         logging.info('Skip disasm')
-      if not doneDecompile:
+      if forceOverride or not doneDecompile:
         simplify(outfile, odir)
       else:
         logging.info('Skip decompile')
-      if not doneSplitfile:
+      if forceOverride or not doneSplitfile:
         splitTofiles(outfile+'.ss', odir)
       else:
         logging.info('Skip split file')
@@ -977,7 +1101,7 @@ def disasm(hap, odir, disasmBin):
         if f2.endswith('.abc'):
           outfile = pp+f+'/'+f2+'.ets'
           logging.info('Disasm '+f+'/'+f2)
-          if not doneDisasm:
+          if forceOverride or not doneDisasm:
             cmd = disasmBin+' '+pp+f+'/'+f2+' '+outfile
             out = execShell(cmd)
             if 'e' in out.keys():
@@ -985,11 +1109,11 @@ def disasm(hap, odir, disasmBin):
               continue
           else:
             logging.info('Skip disasm')
-          if not doneDecompile:
+          if forceOverride or not doneDecompile:
             simplify(outfile, odir)
           else:
             logging.info('Skip decompile')
-          if not doneSplitfile:
+          if forceOverride or not doneSplitfile:
             splitTofiles(outfile+'.ss', odir)
           else:
             logging.info('Skip split file')
@@ -1118,10 +1242,18 @@ def getModuleInfo(hap, odir):
       ex = ab.get('visible', False)
       if not ex:
         ex = ab.get('exported', False)
+      deepLink = []
+      for sk in module.get('skills', []):
+        dp = sk.get('uris', [])
+        for d in dp:
+          deepLink.append(d.get('scheme', '')+'://'+d.get('host', ''))
+      deeplinks = '|'.join(deepLink)
+      if deeplinks:
+        deeplinks = '({})'.format(deeplinks)
       if ex:
-        exportedAbility.append(ab.get('name', '')+': '+ab.get('srcEntrance', ''))
+        exportedAbility.append(ab.get('name', '')+': '+ab.get('srcEntrance', '')+' '+deeplinks)
       else:
-        noneExported.append(ab.get('name', '')+': '+ab.get('srcEntrance', ''))
+        noneExported.append(ab.get('name', '')+': '+ab.get('srcEntrance', '')+' '+deeplinks)
 
     for ab in module.get('extensionAbilities', []):
       ex = ab.get('visible', False)
@@ -1167,7 +1299,8 @@ def doWork(pkg, scan):
   pkg = os.path.abspath(pkg)
   app = getModuleInfo(pkg, os.path.join(curdir, 'apps', ''))
   workdir = os.path.join(curdir, 'apps', app, '')
-  disasm(pkg, workdir, curdir+'disasm/ark_disasm.exe')
+  if scan != 'only':
+    disasm(pkg, workdir, curdir+'disasm/ark_disasm.exe')
   staticScan(workdir, scan)
   logging.info('Done.')
 
@@ -1187,7 +1320,7 @@ def pullHap(hap, outdir):
   return ret
 
 def main(pkgs, scan):
-  if pkgs.endswith('.hap'):
+  if pkgs.endswith('.hap') or pkgs.endswith('.hsp'):
     doWork(pkgs, scan)
   else:
     # bm dump -a | cat > /data/local/tmp/pkglist
@@ -1230,19 +1363,23 @@ def main(pkgs, scan):
       else:
         logging.error("Not exist "+pkg)
 
+# simplify('te.st', '')
+
 curdir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '')
+forceOverride = True
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Hap reverse', formatter_class=argparse.RawDescriptionHelpFormatter,
   epilog='''
   python3 hapecker.py douyin.hap
   ''')
   parser.add_argument("-p", "--pkg", type=str, help="hap file path")
-  parser.add_argument("-m", type=str, help="hap file path")
-  parser.add_argument("-s", "--scan", type=str, help="Staic vuln scan")
+  parser.add_argument("-s", "--scan", type=str, help="Staic vuln scan(use 'only' to skip source decompile)")
+  parser.add_argument("-n", "--noverride", action="store_true", help="force override")
   
   args = parser.parse_args()
   pkg = args.pkg
   scan = args.scan
+  forceOverride = not args.noverride
 
   try:
     if pkg:
