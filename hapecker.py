@@ -77,7 +77,7 @@ def splitTofiles(sourceFile, outDir):
                 logging.error('lib error '+line)
                 continue
               tmp = line.split('@')[3].split('(')[0].split('.')
-              dirName = 'libs/'+'/'.join(tmp[:-2])
+              dirName = 'package/'+'/'.join(tmp[:-2])
               clsName = tmp[-2]
               funName = tmp[-1]+'('+line.split('(')[1]
             else:
@@ -87,7 +87,7 @@ def splitTofiles(sourceFile, outDir):
                 logging.error('lib error '+line)
                 continue
               tmp = lis[0].split('@')[3].split('(')[0].split('.')
-              dirName = 'libs/'+'/'.join(tmp[:-2])
+              dirName = 'package/'+'/'.join(tmp[:-2])
               clsName = tmp[-2]
               funName = '#'+'#'.join(lis[1:])
           else:
@@ -97,6 +97,7 @@ def splitTofiles(sourceFile, outDir):
         elif '@' in line:
           # lib ?
           # .function any com.ss.hm.ugc.aweme.entry@account_api.ets.experiment.TrustEnvExperiment.func_main_0(
+          tmp = []
           if '#' not in line:
             if line.count('@') > 1:
               logging.error(line)
@@ -121,6 +122,8 @@ def splitTofiles(sourceFile, outDir):
             dirName = '/'.join(tmp[:-2])
             clsName = tmp[-2]
             funName = '#'+'#'.join(lis[1:])
+          
+          fullClassname = '.'.join(tmp[:-1]).replace('._modules_.', '@')
         else:
           tmp = line.split('(')[0].split(' ')[2].split('.')
           if len(tmp) < 3:
@@ -390,7 +393,7 @@ def simplify(hap, outDir):
     f.write('')
 
   moduleTag = []
-  importLibs = []
+  importLibs = {}
   moduleStart = True
   soModuleMap = {}
   libModuleMap = {}
@@ -404,6 +407,18 @@ def simplify(hap, outDir):
     slotInd = ''
     line = ''
     strBegin = False
+
+    moduleStarted = False
+    recordStarted = False
+    lastLine = ''
+    curInd = ''
+    clsIndLibMap = {}
+    clsLibMap = {}
+    curRecordCls = ''
+
+    curFuncls = ''
+    funSlotMap = {}
+
     while True:
       try:
         line = f.readline()
@@ -415,31 +430,24 @@ def simplify(hap, outDir):
       if not line: # at least '\n'
         break
 
-      # lib import
-      if moduleStart and 'ModuleTag: ' in line:
-        # ['LOCAL_EXPORT', 'REGULAR_IMPORT', 'INDIRECT_EXPORT', 'STAR_EXPORT', 'NAMESPACE_IMPORT']
-        if ']}' in line:
-          line = line.split(' [ ')[-1]
-          line = line.split('; ]}')[0]
-          libs = line.split('; ')
-        else:
-          # 分布在多行
+      if line.startswith('# LITERALS'):
+        moduleStarted = True
+      if moduleStarted:
+        if 'MODULE_REQUEST_ARRAY: ' in line:
+          curInd = lastLine.split()[1]
+        elif 'ModuleTag: ' in line:
           line = line.strip().removesuffix(';')
-          libs = []
-          libs.append(line)
-        for lb in libs:
           tmp = ''
           localname = ''
           importname = ''
           libname = ''
           exportname = ''
-          tb = lb.split(', ')
+          tb = line.split(', ')
+          tmpstr = ''
           for t in tb:
             tt = t.split(': ')
             if tt[0] == 'ModuleTag':
               tmp = tt[1]
-              if tt[1] not in moduleTag:
-                moduleTag.append(tt[1])
             elif tt[0] == 'local_name':
               localname = tt[1]
             elif tt[0] == 'import_name':
@@ -451,59 +459,138 @@ def simplify(hap, outDir):
             else:
               logging.error(line)
               continue
-          if tmp == 'REGULAR_IMPORT':
-            # importLibs.append('import '+importname+' from '+libname+' as '+localname)
+          if tmp == 'REGULAR_IMPORT' or 'NAMESPACE_IMPORT' == tmp:
             if libname.startswith('@app:'):
-              if localname in soModuleMap.keys() and libname.split('/')[-1] != soModuleMap.get(localname, ''):
-                logging.error('lib name collision '+ libname+' -local- '+localname)
-              soModuleMap[localname] = libname.split('/')[-1]
+              tmpstr = libname.split('/')[-1]+'.so'
             else:
               tmplib = libname
               if importname != 'default' and importname != localname:
                 tmplib += '.'+importname
-              if 'Logger' == localname or libname.endswith('/index') or libname.endswith('/Index'):
-                continue
-              tmp = libModuleMap.get(localname, '')
-              if tmp:
-                if tmplib not in tmp :
-                  # logging.error('(import)name collision: ('+ tmplib+') and ('+libModuleMap.get(localname, '')+') => '+localname+' (add together)')
-                  tmplib += ' || '+tmp
-                else:
-                  tmplib = tmp
-              if tmplib:
-                libModuleMap[localname] = tmplib
+              if tmplib.startswith('@bundle:'):
+                tmplib = tmplib.split('@')[-1]
+                tmplib = '@_modules_/'+tmplib
+              elif tmplib.startswith('@package:'):
+                tmplib = tmplib.split('@')[-1]
+                tmplib = '@package/'+tmplib
               
-          elif tmp == 'NAMESPACE_IMPORT' or tmp == 'STAR_EXPORT' or tmp == 'LOCAL_EXPORT':
-            # importLibs.append('import '+importname+' as '+localname)
-            pass
-          elif tmp == 'INDIRECT_EXPORT':
-            # 'LOCAL_EXPORT' no need
-            #  INDIRECT_EXPORT impl?
-            pass
-            # tmplib = libname
-            
-            # tmp = libModuleMap.get(exportname, '')
-            # if tmp:
-            #   if tmplib not in tmp:
-            #     # logging.error('(export)name collision: ('+ tmplib+') and ('+libModuleMap.get(exportname, '')+') => '+exportname+' (add together)')
-            #     tmplib += ' || ' + tmp
-            #   else:
-            #     tmplib = tmp
-            # if tmplib:
-            #   libModuleMap[exportname] = tmplib
-          else:
-            logging.error(line)
-            continue
+              tmpstr = localname+tmplib
+          elif tmp == 'LOCAL_EXPORT':
+            tmpstr = localname
+
+          if tmpstr:
+            if curInd in clsIndLibMap.keys():
+              clsIndLibMap.get(curInd, []).append(tmpstr)
+            else:
+              tt = []
+              tt.append(tmpstr)
+              clsIndLibMap[curInd] = tt
         
-      if line == '# RECORDS\n':
-        # print(moduleTag)
-        # print(importLibs)
-        moduleStart = False
-        # print(soModuleMap)
-        # return
+      if line.startswith('# RECORDS'):
+        moduleStarted = False
+        recordStarted = True
+      if recordStarted:
+        if line.startswith('.record '):
+          curRecordCls = line.split()[1]
+        elif ' moduleRecordIdx = ' in line:
+          cind = line.split(' moduleRecordIdx = ')[1].strip()
+          clsLibMap[curRecordCls] = clsIndLibMap.get(cind, [])
+
+      lastLine = line
+
+      # # lib import
+      # 已根据.record表进行精准解析
+      # 可删掉
+      # if moduleStart and 'ModuleTag: ' in line:
+      #   # ['LOCAL_EXPORT', 'REGULAR_IMPORT', 'INDIRECT_EXPORT', 'STAR_EXPORT', 'NAMESPACE_IMPORT']
+      #   if ']}' in line:
+      #     line = line.split(' [ ')[-1]
+      #     line = line.split('; ]}')[0]
+      #     libs = line.split('; ')
+      #   else:
+      #     # 分布在多行
+      #     line = line.strip().removesuffix(';')
+      #     libs = []
+      #     libs.append(line)
+      #   for lb in libs:
+      #     tmp = ''
+      #     localname = ''
+      #     importname = ''
+      #     libname = ''
+      #     exportname = ''
+      #     tb = lb.split(', ')
+      #     for t in tb:
+      #       tt = t.split(': ')
+      #       if tt[0] == 'ModuleTag':
+      #         tmp = tt[1]
+      #         if tt[1] not in moduleTag:
+      #           moduleTag.append(tt[1])
+      #       elif tt[0] == 'local_name':
+      #         localname = tt[1]
+      #       elif tt[0] == 'import_name':
+      #         importname = tt[1]
+      #       elif tt[0] == 'module_request':
+      #         libname = tt[1]
+      #       elif tt[0] == 'export_name':
+      #         exportname = tt[1]
+      #       else:
+      #         logging.error(line)
+      #         continue
+      #     if tmp == 'REGULAR_IMPORT':
+      #       # importLibs.append('import '+importname+' from '+libname+' as '+localname)
+      #       if libname.startswith('@app:'):
+      #         if localname in soModuleMap.keys() and libname.split('/')[-1] != soModuleMap.get(localname, ''):
+      #           logging.error('lib name collision '+ libname+' -local- '+localname)
+      #         soModuleMap[localname] = libname.split('/')[-1]
+      #       else:
+      #         tmplib = libname
+      #         if importname != 'default' and importname != localname:
+      #           tmplib += '.'+importname
+      #         if 'Logger' == localname or libname.endswith('/index') or libname.endswith('/Index'):
+      #           continue
+      #         tmp = libModuleMap.get(localname, '')
+      #         if tmp:
+      #           if tmplib not in tmp :
+      #             # logging.error('(import)name collision: ('+ tmplib+') and ('+libModuleMap.get(localname, '')+') => '+localname+' (add together)')
+      #             tmplib += ' || '+tmp
+      #           else:
+      #             tmplib = tmp
+      #         if tmplib:
+      #           libModuleMap[localname] = tmplib
+              
+      #     elif tmp == 'NAMESPACE_IMPORT' or tmp == 'STAR_EXPORT' or tmp == 'LOCAL_EXPORT':
+      #       # importLibs.append('import '+importname+' as '+localname)
+      #       pass
+      #     elif tmp == 'INDIRECT_EXPORT':
+      #       # 'LOCAL_EXPORT' no need
+      #       #  INDIRECT_EXPORT impl?
+      #       pass
+      #       # tmplib = libname
+            
+      #       # tmp = libModuleMap.get(exportname, '')
+      #       # if tmp:
+      #       #   if tmplib not in tmp:
+      #       #     # logging.error('(export)name collision: ('+ tmplib+') and ('+libModuleMap.get(exportname, '')+') => '+exportname+' (add together)')
+      #       #     tmplib += ' || ' + tmp
+      #       #   else:
+      #       #     tmplib = tmp
+      #       # if tmplib:
+      #       #   libModuleMap[exportname] = tmplib
+      #     else:
+      #       logging.error(line)
+      #       continue
+        
+      # if line == '# RECORDS\n':
+      #   # print(moduleTag)
+      #   # print(importLibs)
+      #   moduleStart = False
+      #   # print(soModuleMap)
+      #   # return
 
       if line.startswith('.function '):
         started = True
+        recordStarted = False
+        curFuncls = line.split()[2].split('.')
+        curFuncls = '.'.join(curFuncls[:-1])
         outarr.append('\n'+line)
         continue
       elif started and ( line.startswith('L_ESSlotNumberAnnotation:') or line.startswith('# ===========') ):
@@ -514,6 +601,20 @@ def simplify(hap, outDir):
 
         # Append to file 5M
         if len(outarr) > 5 * 1024 * 1024 / 10:
+          # # 替换slot变量，slot可能是函数范围的而不是类范围的，当前做法不准确
+          # tf = ''
+          # for ind, tl in enumerate(outarr):
+          #   if tl.startswith('.function any'):
+          #     tf = tl.split()[2].split('.')
+          #     tf = '.'.join(tf[:-1])
+          #   elif '(loadSlot ' in tl:
+          #     # (loadSlot 0x0,0x1)
+          #     tt = tl.split('(loadSlot ')[1].split(')')[0]
+          #     tv = funSlotMap.get(curFuncls, {}).get(tt, '')
+          #     if tv:
+          #       print(tl, tv, curFuncls)
+          #       outarr[ind] = tl.replace('(loadSlot {})'.format(tt), tv)
+
           with open(hap+'.raw', 'a', encoding=saveFileEncode) as f2:
             f2.write(''.join(outarr))
           with open(hap+'.ss', 'a', encoding=saveFileEncode) as ff:
@@ -582,39 +683,29 @@ def simplify(hap, outDir):
             staNeedReset = ''
             slotInd = '(loadSlot-module {})'.format(tc[1])
             accValue = slotInd
+            if cmd == 'ldexternalmodulevar' or cmd == 'wide.ldexternalmodulevar':
+              try:
+                # 已经根据.record表进行精准解析
+                accValue = clsLibMap.get(curFuncls, [])[int(tc[1], 16)]
+              except Exception as e:
+                logging.error(e)
+                logging.error(code)
+                logging.error(curFuncls)
+                logging.error(clsLibMap.get(curFuncls, []))
+
           elif cmd in ['ldlexvar', 'wide.ldlexvar']:
+            # 当前类或当前函数中，依据save/load index进行对应
             staNeedReset = ''
             slotInd = '(loadSlot {})'.format(''.join(tc[1:]))
             accValue = slotInd
+
+            # 由于各个function的排序问题，load可能会在save之前
+            accValue = funSlotMap.get(curFuncls, {}).get(''.join(tc[1:]), accValue)
           elif code.startswith('throw.undefinedifholewithname '):
             if not accValue.startswith('(loadSlot'):
-              logging.error('#'.join(handledCMD[-3:]) + ' #'+accValue+' #'+loadVAR)
-              outarr.append("****lda.str error ????**** \n")
-
+              continue
+            
             accValue = tc[1].strip('"')
-            tn = soModuleMap.get(accValue, '')
-            if tn:
-              tn = '(lib'+tn+'.so)'
-              accValue += tn
-            else:
-              tn = libModuleMap.get(accValue, '')
-              if tn:
-                if ' || ' not in tn:
-                  if tn.startswith('@bundle:'):
-                    tn = tn.split('@')[-1]
-                    tn = '@_modules_/'+tn
-                else:
-                  tns = tn.split(' || ')
-                  bundleStr = ''
-                  # @package:  and @bundle:  优先bundle
-                  for tnss in tns:
-                    if tnss.startswith('@bundle:'):
-                      bundleStr += tnss +' || '
-                  if bundleStr:
-                    tn = bundleStr.removesuffix(' || ')
-                accValue = '('+accValue+tn+')'
-              else:
-                accValue = '('+accValue+'@'+slotInd+')'
             if staNeedReset:
               staNeedReset = staNeedReset.split('@slot')[0]
               outarr.append(sep+staNeedReset+' = '+accValue+'\n')
@@ -725,6 +816,12 @@ def simplify(hap, outDir):
             outarr.append(sep+accValue+'(saveSlot-module {})\n'.format(tc[1]))
           elif cmd in ['stlexvar', 'wide.stlexvar']:
             outarr.append(sep+accValue+'(saveSlot {})\n'.format(''.join(tc[1:])))
+            tt = {}
+            tt[''.join(tc[1:])] = accValue
+            if curFuncls in funSlotMap.keys():
+              funSlotMap.get(curFuncls, {}).update(tt)
+            else:
+              funSlotMap[curFuncls] = tt
           elif code.startswith('createemptyobject'):
             accValue = 'OBJ'
           elif code.startswith('createemptyarray '):
